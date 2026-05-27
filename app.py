@@ -82,10 +82,18 @@ style_css = """
 </style>
 """
 
-# --- 資料庫初始化 ---
+# --- 資料庫初始化（加入強制重整機制，解決欄位衝突錯誤） ---
 def init_db():
     conn = sqlite3.connect('bingo_v10.db', check_same_thread=False)
     cursor = conn.cursor()
+    
+    # 檢查舊的表格是否存在，如果缺少 draw_time 欄位就重新建立它
+    try:
+        cursor.execute("SELECT draw_time FROM bingo_history LIMIT 1")
+    except sqlite3.OperationalError:
+        # 如果出錯，說明是舊資料庫格式不相容，直接刪除舊表重新配置
+        cursor.execute("DROP TABLE IF EXISTS bingo_history")
+        
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS bingo_history (
             period_num TEXT PRIMARY KEY,
@@ -122,8 +130,11 @@ tab1, tab2, tab3 = st.tabs(["🔮 核心預測", "📊 歷史走勢", "⚙️ �
 with tab1:
     # 讀取最新一期資訊
     cursor = conn.cursor()
-    cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 10")
-    latest_draws = cursor.fetchall()
+    try:
+        cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 10")
+        latest_draws = cursor.fetchall()
+    except sqlite3.OperationalError:
+        latest_draws = []
     
     # 🎯 框框：告訴你目前資料庫更新到的最新一期與號碼
     if latest_draws:
@@ -151,9 +162,10 @@ with tab1:
         </div>
         """, unsafe_allowed_html=True)
     else:
+        # 初次使用或資料庫剛重置的提示框
         st.markdown(body=f"""{style_css}
         <div class="latest-box" style="text-align:center;">
-            <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未建立數據</div>
+            <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫全新初始化成功</div>
             <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「刷新開獎數據」按鈕同步最新期數</p>
         </div>
         """, unsafe_allowed_html=True)
@@ -182,14 +194,18 @@ with tab2:
     
     st.markdown("---")
     st.subheader("📋 歷史開獎紀錄 (最新 10 期)")
-    df = pd.read_sql_query(
-        "SELECT period_num AS 期數, super_num AS 超級獎號, numbers AS 開出獎號 FROM bingo_history ORDER BY period_num DESC LIMIT 10", 
-        conn
-    )
+    try:
+        df = pd.read_sql_query(
+            "SELECT period_num AS 期數, super_num AS 超級獎號, numbers AS 開出獎號 FROM bingo_history ORDER BY period_num DESC LIMIT 10", 
+            conn
+        )
+    except:
+        df = pd.DataFrame()
+        
     if not df.empty:
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.write("暫無紀錄。")
+        st.write("暫無紀錄，請先前往核心預測分頁點擊刷新數據。")
 
 # ==================== 頁籤 3：策略微調 ====================
 with tab3:
