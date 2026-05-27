@@ -11,7 +11,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# 使用標準 st.html 集中注入網頁的所有 CSS 樣式，100% 避免 st.markdown 大括號變數解析錯誤
+# 使用標準 st.html 集中注入網頁的所有 CSS 樣式，並優化手機版球體兩排排版
 st.html("""
 <style>
     /* 標題置中且大小適中 */
@@ -29,7 +29,7 @@ st.html("""
         background-color: #15191E;
         border: 2px solid #E63946;
         border-radius: 12px;
-        padding: 15px;
+        padding: 15px 10px; /* 稍微縮小左右內邊距以利排版 */
         margin-bottom: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
@@ -51,19 +51,27 @@ st.html("""
         border: 1px solid #2D3748;
         text-align: center;
     }
-    /* 號碼球樣式 */
+    /* 號碼球容器：確保置中且寬度剛好能放 10 顆球 */
+    .balls-container {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 350px;
+        margin: 0 auto;
+    }
+    /* 精準調校號碼球大小與間距，確保在手機上完美排成兩排 */
     .ball {
         display: inline-block;
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         background-color: #E63946;
         color: white;
         border-radius: 50%;
         text-align: center;
-        line-height: 32px;
+        line-height: 28px;
         font-weight: bold;
-        margin: 3px;
-        font-size: 13px;
+        margin: 3px 2px;
+        font-size: 12px;
     }
     /* 超級獎號球樣式 */
     .super-ball {
@@ -113,98 +121,60 @@ def simulate_crawl():
     ''', (simulated_period, now.strftime('%Y-%m-%d %H:%M:%S'), nums_str, super_num))
     conn.commit()
 
-# --- UI 頂部標題（縮小並僅保留 BINGO） ---
+# --- UI 頂部標題 ---
 st.html('<div class="title-bingo">🎯 BINGO</div>')
 
-# --- 核心功能頁籤 ---
-tab1, tab2, tab3 = st.tabs(["🔮 核心預測", "📊 歷史走勢", "⚙️ 策略微調"])
+# 讀取最新一期資訊
+cursor = conn.cursor()
+try:
+    cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
+    latest_draw = cursor.fetchone()
+except sqlite3.OperationalError:
+    latest_draw = None
 
-# ==================== 頁籤 1：核心預測 ====================
-with tab1:
-    # 讀取最新一期資訊
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
-        latest_draw = cursor.fetchone()
-    except sqlite3.OperationalError:
-        latest_draw = None
+# 🎯 資訊提示框
+if latest_draw:
+    period, draw_time, numbers, s_num = latest_draw
     
-    # 🎯 框框：告訴你目前資料庫更新到的最新一期與號碼
-    if latest_draw:
-        period, draw_time, numbers, s_num = latest_draw
-        
-        balls_html = ""
-        for n in numbers.split(','):
-            if int(n) == s_num:
-                balls_html += f'<div class="ball super-ball">{n}</div>'
-            else:
-                balls_html += f'<div class="ball">{n}</div>'
-                
-        # 改用純字串拼接與 st.html 渲染，徹底避開大括號解析衝突
-        box_html = (
-            '<div class="latest-box">'
-            '   <div class="latest-title">📊 資料庫最新同步開獎資訊</div>'
-            '   <div style="margin-bottom: 8px;">'
-            '       <span style="color:#A0AEC0; font-size:14px;">最新期數：</span>'
-            f'      <span class="latest-period">{period}</span>'
-            f'      <span style="color:#718096; font-size:12px; margin-left:10px;">({draw_time})</span>'
-            '   </div>'
-            '   <div style="color:#A0AEC0; font-size:14px; margin-bottom: 8px;">開獎號碼：</div>'
-            f'  <div style="text-align: center;">{balls_html}</div>'
-            '   <div style="text-align: right; margin-top: 5px; font-size: 11px; color: #718096;">※ 黃色球為超級獎號</div>'
-            '</div>'
-        )
-        st.html(box_html)
-    else:
-        # 初次使用的提示框
-        st.html(
-            '<div class="latest-box" style="text-align:center;">'
-            '   <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫全新初始化成功</div>'
-            '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步最新期數</p>'
-            '</div>'
-        )
-        
-    # 🎯 移到框框下方的「刷新數據按鈕」
-    st.button("🔄 立即刷新數據", use_container_width=True, on_click=simulate_crawl)
-    st.markdown(" ")
-        
-    st.subheader("🎯 V10 三星推薦組合")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>')
-    with col2:
-        st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>')
-    with col3:
-        st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>')
-
-# ==================== 頁籤 2：歷史走勢 ====================
-with tab2:
-    st.subheader("📈 近期數據統計分析")
-    chart_data = pd.DataFrame({
-        '尾數': ['0尾', '1尾', '2尾', '3尾', '4尾', '5尾', '6尾', '7尾', '8尾', '9尾'],
-        '近10期出現次數': [12, 8, 15, 6, 9, 14, 11, 7, 18, 5]
-    }).set_index('尾數')
-    st.bar_chart(chart_data)
+    balls_html = ""
+    for n in numbers.split(','):
+        if int(n) == s_num:
+            balls_html += f'<div class="ball super-ball">{n}</div>'
+        else:
+            balls_html += f'<div class="ball">{n}</div>'
+            
+    box_html = (
+        '<div class="latest-box">'
+        '   <div class="latest-title">📊 資料庫最新同步開獎資訊</div>'
+        '   <div style="margin-bottom: 8px;">'
+        '       <span style="color:#A0AEC0; font-size:14px;">最新期數：</span>'
+        f'      <span class="latest-period">{period}</span>'
+        f'      <span style="color:#718096; font-size:12px; margin-left:10px;">({draw_time})</span>'
+        '   </div>'
+        '   <div style="color:#A0AEC0; font-size:14px; margin-bottom: 8px;">開獎號碼：</div>'
+        f'  <div class="balls-container">{balls_html}</div>'
+        '   <div style="text-align: right; margin-top: 5px; font-size: 11px; color: #718096;">※ 黃色球為超級獎號</div>'
+        '</div>'
+    )
+    st.html(box_html)
+else:
+    st.html(
+        '<div class="latest-box" style="text-align:center;">'
+        '   <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未同步數據</div>'
+        '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步最新期數</p>'
+        '</div>'
+    )
     
-    st.markdown("---")
-    st.subheader("📋 歷史開獎紀錄 (最新 10 期)")
-    try:
-        df = pd.read_sql_query(
-            "SELECT period_num AS 期數, super_num AS 超級獎號, numbers AS 開出獎號 FROM bingo_history ORDER BY period_num DESC LIMIT 10", 
-            conn
-        )
-    except:
-        df = pd.DataFrame()
-        
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.write("暫無紀錄，請先前往核心預測分頁點擊刷新數據。")
-
-# ==================== 頁籤 3：策略微調 ====================
-with tab3:
-    st.subheader("🛠️ V10 演算法參數微調")
-    period_range = st.slider("分析歷史期數範疇", min_value=5, max_value=50, value=10, step=5)
-    hot_weight = st.slider("熱門號碼權重比 (Hot Block)", min_value=0.0, max_value=1.0, value=0.6, step=0.1)
-    tail_weight = st.slider("尾數分佈權重比 (Tail Control)", min_value=0.0, max_value=1.0, value=0.4, step=0.1)
-    st.success(f"設定已同步：分析近 {period_range} 期")
+# 🎯 刷新數據按鈕
+st.button("🔄 立即刷新數據", use_container_width=True, on_click=simulate_crawl)
+st.markdown(" ")
+    
+# 🎯 預測版面
+st.subheader("🎯 V10 三星推薦組合")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>')
+with col2:
+    st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>')
+with col3:
+    st.html('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>')
