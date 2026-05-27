@@ -11,26 +11,37 @@ st.set_page_config(
     layout="centered"
 )
 
-# 自訂 CSS 樣式，優化手機版視覺與卡片框（全部改為標準的 body= 指定方式）
-st.markdown(body="""
+# 使用獨立的 html 元件注入 CSS 樣式，百分之百避免新版 Markdown 解析錯誤
+st.components.v1.html("""
 <style>
+    /* 全域手機版暗色調適配 */
+    html, body {
+        background-color: #0E1117;
+        color: #FFFFFF;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
     /* 標題置中且大小適中 */
     .title-bingo {
         text-align: center;
         font-size: 32px;
         font-weight: 900;
         letter-spacing: 2px;
-        margin-top: -10px;
-        margin-bottom: 5px;
         color: #FFFFFF;
+        margin-top: 10px;
     }
-    /* 最新期數與開獎號碼的專用提示框 */
+</style>
+<div class="title-bingo">🎯 BINGO</div>
+""", height=80)
+
+# 自訂卡片與號碼球的 CSS 變數（用於下方區塊）
+style_css = """
+<style>
     .latest-box {
         background-color: #15191E;
         border: 2px solid #E63946;
         border-radius: 12px;
         padding: 15px;
-        margin-bottom: 10px; /* 縮小底部間距，讓按鈕緊跟在下方 */
+        margin-bottom: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
     .latest-title {
@@ -51,7 +62,6 @@ st.markdown(body="""
         border: 1px solid #2D3748;
         text-align: center;
     }
-    /* 號碼球樣式 */
     .ball {
         display: inline-block;
         width: 32px;
@@ -65,13 +75,12 @@ st.markdown(body="""
         margin: 3px;
         font-size: 13px;
     }
-    /* 超級獎號球樣式 */
     .super-ball {
         background-color: #FFB703;
         color: #023047;
     }
 </style>
-""", unsafe_allowed_html=True)
+"""
 
 # --- 資料庫初始化 ---
 def init_db():
@@ -106,9 +115,6 @@ def simulate_crawl():
     ''', (simulated_period, now.strftime('%Y-%m-%d %H:%M:%S'), nums_str, super_num))
     conn.commit()
 
-# --- UI 頂部標題（縮小並僅保留 BINGO） ---
-st.markdown(body='<div class="title-bingo">🎯 BINGO</div>', unsafe_allowed_html=True)
-
 # --- 核心功能頁籤 ---
 tab1, tab2, tab3 = st.tabs(["🔮 核心預測", "📊 歷史走勢", "⚙️ 策略微調"])
 
@@ -121,10 +127,8 @@ with tab1:
     
     # 🎯 框框：告訴你目前資料庫更新到的最新一期與號碼
     if latest_draws:
-        # 取出最新那一期
         period, draw_time, numbers, s_num = latest_draws[0]
         
-        # 產生號碼球 HTML
         balls_html = ""
         for n in numbers.split(','):
             if int(n) == s_num:
@@ -132,8 +136,8 @@ with tab1:
             else:
                 balls_html += f'<div class="ball">{n}</div>'
                 
-        # 渲染專用提示框（已修正加上 body=）
-        st.markdown(body=f"""
+        # 渲染專用提示框
+        st.markdown(body=f"""{style_css}
         <div class="latest-box">
             <div class="latest-title">📊 資料庫最新同步開獎資訊</div>
             <div style="margin-bottom: 8px;">
@@ -147,8 +151,7 @@ with tab1:
         </div>
         """, unsafe_allowed_html=True)
     else:
-        # 初次使用的提示框（已修正加上 body=）
-        st.markdown(body="""
+        st.markdown(body=f"""{style_css}
         <div class="latest-box" style="text-align:center;">
             <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未建立數據</div>
             <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「刷新開獎數據」按鈕同步最新期數</p>
@@ -162,11 +165,11 @@ with tab1:
     st.subheader("🎯 V10 三星推薦組合")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body=f'{style_css}<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allowed_html=True)
     with col2:
-        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body=f'{style_css}<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allowed_html=True)
     with col3:
-        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body=f'{style_css}<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>', unsafe_allowed_html=True)
 
 # ==================== 頁籤 2：歷史走勢 ====================
 with tab2:
