@@ -11,8 +11,8 @@ st.set_page_config(
     layout="centered"
 )
 
-# 自訂 CSS 樣式，優化手機版視覺與卡片框
-st.markdown("""
+# 自訂 CSS 樣式，優化手機版視覺與卡片框（已修正參數指定錯誤）
+st.markdown(body="""
 <style>
     /* 標題置中且大小適中 */
     .title-bingo {
@@ -97,7 +97,7 @@ def simulate_crawl():
     
     drawn_list = sorted(random.sample(range(1, 81), 20))
     super_num = random.choice(drawn_list)
-    nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
+    nums_str = ",".join([str(i).zfill(2) for i in sorted(drawn_list)])
     
     cursor = conn.cursor()
     cursor.execute('''
