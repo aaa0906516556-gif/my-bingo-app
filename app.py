@@ -11,7 +11,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# 自訂 CSS 樣式，優化手機版視覺與卡片框（已修正參數指定錯誤）
+# 自訂 CSS 樣式，優化手機版視覺與卡片框（全部改為標準的 body= 指定方式）
 st.markdown(body="""
 <style>
     /* 標題置中且大小適中 */
@@ -107,7 +107,7 @@ def simulate_crawl():
     conn.commit()
 
 # --- UI 頂部標題（縮小並僅保留 BINGO） ---
-st.markdown('<div class="title-bingo">🎯 BINGO</div>', unsafe_allowed_html=True)
+st.markdown(body='<div class="title-bingo">🎯 BINGO</div>', unsafe_allowed_html=True)
 
 # --- 核心功能頁籤 ---
 tab1, tab2, tab3 = st.tabs(["🔮 核心預測", "📊 歷史走勢", "⚙️ 策略微調"])
@@ -132,8 +132,8 @@ with tab1:
             else:
                 balls_html += f'<div class="ball">{n}</div>'
                 
-        # 渲染專用提示框
-        st.markdown(f"""
+        # 渲染專用提示框（已修正加上 body=）
+        st.markdown(body=f"""
         <div class="latest-box">
             <div class="latest-title">📊 資料庫最新同步開獎資訊</div>
             <div style="margin-bottom: 8px;">
@@ -147,8 +147,8 @@ with tab1:
         </div>
         """, unsafe_allowed_html=True)
     else:
-        # 初次使用的提示框
-        st.markdown("""
+        # 初次使用的提示框（已修正加上 body=）
+        st.markdown(body="""
         <div class="latest-box" style="text-align:center;">
             <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未建立數據</div>
             <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「刷新開獎數據」按鈕同步最新期數</p>
@@ -162,11 +162,11 @@ with tab1:
     st.subheader("🎯 V10 三星推薦組合")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allowed_html=True)
     with col2:
-        st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allowed_html=True)
     with col3:
-        st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>', unsafe_allowed_html=True)
+        st.markdown(body='<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>', unsafe_allowed_html=True)
 
 # ==================== 頁籤 2：歷史走勢 ====================
 with tab2:
