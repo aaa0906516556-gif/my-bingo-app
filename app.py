@@ -9,7 +9,7 @@ import random
 # --- 1. 設定網頁基本資訊 ---
 st.set_page_config(page_title="BINGO", page_icon="🎯", layout="centered")
 
-# --- 2. 注入 CSS 樣式 (改用多行字串，安全不中斷) ---
+# --- 2. 注入 CSS 樣式 (獨立字串，100% 安全) ---
 css = """
 <style>
     .title-bingo { 
@@ -147,7 +147,7 @@ def fetch_and_save():
         nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
 
         conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)',
-                     fetched_period, draw_time, nums_str, super_num)
+                     (fetched_period, draw_time, nums_str, super_num))
         conn.commit()
         
     return success, fetched_period
@@ -155,34 +155,6 @@ def fetch_and_save():
 # --- 5. UI 頂部標題 ---
 st.markdown('<div class="title-bingo">🎯 BINGO</div>', unsafe_allow_html=True)
 
-# --- 6. 刷新按鈕邏輯 (按下去會自動重頭跑一次，數據完美同步) ---
+# --- 6. 刷新按鈕邏輯 (按鈕點擊後，程式重跑，優先執行資料庫寫入) ---
 if st.button("🔄 立即刷新數據", use_container_width=True):
-    is_real, p_num = fetch_and_save()
-    if is_real:
-        st.toast(f"✅ 已同步奧索網最新期數：{p_num}", icon="🚀")
-    else:
-        st.toast(f"⚠️ 網路異常，已切換至公式推算期數：{p_num}", icon="⚠️")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- 7. 從資料庫讀取最新開獎資訊 ---
-cursor = conn.cursor()
-cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
-latest_draw = cursor.fetchone()
-
-if latest_draw:
-    period, draw_time, numbers, s_num = latest_draw
-    balls_html = ""
-    for n in numbers.split(','):
-        if n.isdigit() and int(n) == s_num:
-            balls_html += f'<div class="ball super-ball">{n}</div>'
-        else:
-            balls_html += f'<div class="ball">{n}</div>'
-
-    box_html = f"""
-    <div class="latest-box">
-       <div class="latest-title">📊 資料庫最新同步開獎資訊</div>
-       <div style="margin-bottom: 8px;">
-           <span style="color:#A0AEC0; font-size:14px;">最新期數：</span>
-           <span class="latest-period">{period}</span>
-           <span style="color:#718096; font-size:12px; margin-left:10px;">
+    is_real, p_num = fetch
