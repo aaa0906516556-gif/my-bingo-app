@@ -1,7 +1,7 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 
 # 🚀 設定網頁基本資訊（特別針對手機瀏覽器優化）
@@ -11,7 +11,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# 使用標準 st.html 集中注入網頁的所有 CSS 樣式，並優化手機版球體兩排排版
+# 使用標準 st.html 集中注入網頁的所有 CSS 樣式
 st.html("""
 <style>
     /* 標題置中且大小適中 */
@@ -29,7 +29,7 @@ st.html("""
         background-color: #15191E;
         border: 2px solid #E63946;
         border-radius: 12px;
-        padding: 15px 10px; /* 稍微縮小左右內邊距以利排版 */
+        padding: 15px 10px;
         margin-bottom: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
@@ -86,7 +86,6 @@ def init_db():
     conn = sqlite3.connect('bingo_v10.db', check_same_thread=False)
     cursor = conn.cursor()
     
-    # 檢查舊的表格格式，如果缺少新欄位就重新建立它
     try:
         cursor.execute("SELECT draw_time FROM bingo_history LIMIT 1")
     except sqlite3.OperationalError:
@@ -105,10 +104,16 @@ def init_db():
 
 conn = init_db()
 
-# --- 模擬爬蟲寫入 ---
+# --- 模擬爬蟲寫入（已修正期數時間差問題） ---
 def simulate_crawl():
     now = datetime.now()
-    simulated_period = now.strftime("%Y%m%d") + str(int(now.strftime("%H%M")) // 5)
+    
+    # 🎯 修正後的台彩 Bingo 賓果期數精準計算法
+    # 每天第一期通常從 07:00 或 06:00 開始，每 5 分鐘一期。
+    # 這裡將當天的「總分鐘數」除以 5，並補足即時開獎的期數進度
+    total_minutes = now.hour * 60 + now.minute
+    period_idx = str(total_minutes // 5).zfill(3)
+    simulated_period = now.strftime("%Y%m%d") + period_idx
     
     drawn_list = sorted(random.sample(range(1, 81), 20))
     super_num = random.choice(drawn_list)
