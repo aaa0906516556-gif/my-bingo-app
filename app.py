@@ -1,15 +1,15 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
 import random
 
-# --- 1. 基本設定 ---
+# --- 1. 網頁基本設定 ---
 st.set_page_config(page_title="BINGO V10", page_icon="🎯", layout="centered")
 
-# --- 2. CSS 樣式 ---
+# --- 2. CSS 樣式配置 ---
 st.markdown("""
 <style>
     .title-bingo { text-align: center; font-size: 32px; font-weight: 900; margin-bottom: 10px; color: #FFFFFF; }
@@ -23,7 +23,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 資料庫連線 ---
+# --- 3. 初始化歷史資料庫 ---
 @st.cache_resource
 def init_db():
     conn = sqlite3.connect('bingo_v10.db', check_same_thread=False)
@@ -40,19 +40,23 @@ def init_db():
 
 conn = init_db()
 
-# --- 4. 爬蟲與資料庫完整更新 ---
+# --- 4. 核心數據同步邏輯 (支援回呼與多期全量入庫) ---
 def fetch_and_save():
     success = False
     fetched_period = ""
+    # 強制校正為台灣時間 (避免 Streamlit 雲端伺服器 UTC 時區錯亂)
+    tw_now = datetime.utcnow() + timedelta(hours=8)
+    
     try:
         url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.find_all('tr', class_=['RowStyle', 'AlternatingRowStyle'])
             
-            # 迴圈抓取網頁上所有的近期歷史資料，全部建檔入庫
-            for row in rows:
+            # 從舊到新反向寫入歷史紀錄，確保最新一期在最上面
+            for row in reversed(rows):
                 cols = row.find_all('td')
                 if len(cols) >= 4:
                     p_num = cols[0].text.strip()
@@ -64,52 +68,39 @@ def fetch_and_save():
 
                     if len(nums) >= 20 and p_num.isdigit():
                         nums_str = ",".join([str(n).zfill(2) for n in sorted(nums[:20])])
-                        d_time = f"{datetime.now().strftime('%Y-%m-%d')} {t_str}:00"
-                        # 使用 INSERT OR IGNORE，確保所有資料進庫且不重複報錯
-                        conn.execute('INSERT OR IGNORE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
-                        
-                        if not success: # 抓取最新一期作為回報基準
-                            success = True
-                            fetched_period = p_num
+                        d_time = f"{tw_now.strftime('%Y-%m-%d')} {t_str}:00"
+                        conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
+                        success = True
+                        fetched_period = p_num
             conn.commit()
-    except Exception as e:
+    except Exception:
         pass
 
-    # 備用機制 (網路異常時)
+    # 台灣時間公式精準推算兜底
     if not success:
-        dt_now = datetime.now()
-        start = datetime(dt_now.year, dt_now.month, dt_now.day, 7, 5)
-        if dt_now < start:
-            fetched_period = dt_now.strftime("%Y%m%d") + "001"
-            d_time = dt_now.strftime("%Y-%m-%d 07:05:00")
+        start = datetime(tw_now.year, tw_now.month, tw_now.day, 7, 5)
+        if tw_now < start:
+            fetched_period = tw_now.strftime("%Y%m%d") + "001"
+            d_time = tw_now.strftime("%Y-%m-%d 07:05:00")
         else:
-            mins = int((dt_now - start).total_seconds() // 60)
+            mins = int((tw_now - start).total_seconds() // 60)
             idx = min(203, max(1, (mins // 5) + 1))
-            fetched_period = dt_now.strftime("%Y%m%d") + str(idx).zfill(3)
-            d_time = dt_now.strftime("%Y-%m-%d %H:%M:%S")
+            fetched_period = tw_now.strftime("%Y%m%d") + str(idx).zfill(3)
+            d_time = tw_now.strftime("%Y-%m-%d %H:%M:%S")
 
         rand_nums = sorted(random.sample(range(1, 81), 20))
         s_num = random.choice(rand_nums)
         nums_str = ",".join([str(i).zfill(2) for i in rand_nums])
-        conn.execute('INSERT OR IGNORE INTO bingo_history VALUES (?, ?, ?, ?)', (fetched_period, d_time, nums_str, s_num))
+        conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)', (fetched_period, d_time, nums_str, s_num))
         conn.commit()
         
-    return success, fetched_period
+    # 將回傳結果存入 Session 狀態中，供頁面自然刷新後讀取
+    st.session_state['refresh_status'] = {'is_ok': success, 'p_num': fetched_period, 'triggered': True}
 
-# --- 5. UI 介面 ---
+# --- 5. UI 渲染：頂部標題 ---
 st.markdown('<div class="title-bingo">🎯 BINGO</div>', unsafe_allow_html=True)
 
-# --- 6. 按鈕邏輯 (解決畫面不同步、廢除 st.rerun) ---
-if st.button("🔄 立即刷新數據", use_container_width=True):
-    is_ok, current_p = fetch_and_save()
-    if is_ok:
-        st.success(f"✅ 已完成數據刷新！最新期數：{current_p}")
-    else:
-        st.warning(f"⚠️ 網路異常，已切換至公式推算期數：{current_p}")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- 7. 讀取最新歷史紀錄 ---
+# --- 6. 讀取並顯示最新開獎結果 (固定在上方) ---
 cursor = conn.cursor()
 cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
 row_data = cursor.fetchone()
@@ -137,9 +128,23 @@ if row_data:
     </div>
     """, unsafe_allow_html=True)
 else:
-    st.info("尚無歷史資料，請點擊上方刷新按鈕。")
+    st.info("資料庫暫無紀錄，請點擊下方按鈕進行首次同步。")
 
-# --- 8. V10 三星預測 ---
+# --- 7. 立即刷新數據按鈕 (精確配置在開獎資訊正下方) ---
+st.button("🔄 立即刷新數據", use_container_width=True, on_click=fetch_and_save)
+
+# 檢查是否有點擊狀態，並彈出對應提示
+if st.session_state.get('refresh_status', {}).get('triggered', False):
+    status = st.session_state['refresh_status']
+    if status['is_ok']:
+        st.success(f"✅ 已完成數據刷新！最新期數：{status['p_num']}")
+    else:
+        st.warning(f"⚠️ 網路異常，已切換至公式推算期數：{status['p_num']}")
+    st.session_state['refresh_status']['triggered'] = False  # 顯示後重設防重複觸發
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- 8. V10 三星預測版面 ---
 st.subheader("🎯 V10 三星推薦組合")
 st.markdown("<p style='color:#A0AEC0; font-size:14px; margin-top:-10px; margin-bottom:15px;'>依據歷史資料庫回測，鎖定區域輪替與尾數熱度</p>", unsafe_allow_html=True)
 
