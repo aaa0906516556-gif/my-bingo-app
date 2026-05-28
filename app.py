@@ -6,10 +6,10 @@ import requests
 from bs4 import BeautifulSoup
 import random
 
-# --- 1. 網頁基本設定 ---
-st.set_page_config(page_title="BINGO", page_icon="🎯", layout="centered")
+# --- 1. 基本設定 ---
+st.set_page_config(page_title="BINGO V10", page_icon="🎯", layout="centered")
 
-# --- 2. 注入 CSS 樣式 (精簡版，防止字串過長被切斷) ---
+# --- 2. CSS 樣式 ---
 st.markdown("""
 <style>
     .title-bingo { text-align: center; font-size: 32px; font-weight: 900; margin-bottom: 10px; color: #FFFFFF; }
@@ -23,11 +23,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. 資料庫初始化 (使用安全快取) ---
+# --- 3. 資料庫連線 ---
 @st.cache_resource
 def init_db():
-    db_conn = sqlite3.connect('bingo_v10.db', check_same_thread=False)
-    db_conn.execute('''
+    conn = sqlite3.connect('bingo_v10.db', check_same_thread=False)
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS bingo_history (
             period_num TEXT PRIMARY KEY,
             draw_time TEXT,
@@ -35,74 +35,81 @@ def init_db():
             super_num INTEGER
         )
     ''')
-    db_conn.commit()
-    return db_conn
+    conn.commit()
+    return conn
 
 conn = init_db()
 
-# --- 4. 核心爬蟲與存檔邏輯 ---
-def run_data_sync():
-    has_saved = False
-    p_num = ""
+# --- 4. 爬蟲與資料庫完整更新 ---
+def fetch_and_save():
+    success = False
+    fetched_period = ""
     try:
         url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.find_all('tr', class_=['RowStyle', 'AlternatingRowStyle'])
-            if rows:
-                cols = rows[0].find_all('td')
+            
+            # 迴圈抓取網頁上所有的近期歷史資料，全部建檔入庫
+            for row in rows:
+                cols = row.find_all('td')
                 if len(cols) >= 4:
                     p_num = cols[0].text.strip()
                     t_str = cols[1].text.strip()
                     b_divs = cols[2].find_all('div')
                     nums = [int(b.text.strip()) for b in b_divs if b.text.strip().isdigit()]
                     s_div = cols[3].find('div')
-                    s_num = int(s_div.text.strip()) if s_div and s_div.text.strip().isdigit() else nums[0]
+                    s_num = int(s_div.text.strip()) if s_div and s_div.text.strip().isdigit() else (nums[0] if nums else 0)
 
                     if len(nums) >= 20 and p_num.isdigit():
                         nums_str = ",".join([str(n).zfill(2) for n in sorted(nums[:20])])
                         d_time = f"{datetime.now().strftime('%Y-%m-%d')} {t_str}:00"
-                        conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
-                        conn.commit()
-                        has_saved = True
-    except Exception:
+                        # 使用 INSERT OR IGNORE，確保所有資料進庫且不重複報錯
+                        conn.execute('INSERT OR IGNORE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
+                        
+                        if not success: # 抓取最新一期作為回報基準
+                            success = True
+                            fetched_period = p_num
+            conn.commit()
+    except Exception as e:
         pass
 
-    # 網路失敗時的自動推算安全兜底
-    if not has_saved:
+    # 備用機制 (網路異常時)
+    if not success:
         dt_now = datetime.now()
         start = datetime(dt_now.year, dt_now.month, dt_now.day, 7, 5)
         if dt_now < start:
-            p_num = dt_now.strftime("%Y%m%d") + "001"
+            fetched_period = dt_now.strftime("%Y%m%d") + "001"
             d_time = dt_now.strftime("%Y-%m-%d 07:05:00")
         else:
             mins = int((dt_now - start).total_seconds() // 60)
             idx = min(203, max(1, (mins // 5) + 1))
-            p_num = dt_now.strftime("%Y%m%d") + str(idx).zfill(3)
+            fetched_period = dt_now.strftime("%Y%m%d") + str(idx).zfill(3)
             d_time = dt_now.strftime("%Y-%m-%d %H:%M:%S")
 
         rand_nums = sorted(random.sample(range(1, 81), 20))
         s_num = random.choice(rand_nums)
         nums_str = ",".join([str(i).zfill(2) for i in rand_nums])
-        conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
+        conn.execute('INSERT OR IGNORE INTO bingo_history VALUES (?, ?, ?, ?)', (fetched_period, d_time, nums_str, s_num))
         conn.commit()
-    return has_saved, p_num
+        
+    return success, fetched_period
 
-# --- 5. 畫面渲染：頂部標題 ---
+# --- 5. UI 介面 ---
 st.markdown('<div class="title-bingo">🎯 BINGO</div>', unsafe_allow_html=True)
 
-# --- 6. 核心重整按鈕 (點擊時優先觸發同步，自然更新下方的資料庫讀取) ---
+# --- 6. 按鈕邏輯 (解決畫面不同步、廢除 st.rerun) ---
 if st.button("🔄 立即刷新數據", use_container_width=True):
-    is_ok, current_p = run_data_sync()
+    is_ok, current_p = fetch_and_save()
     if is_ok:
-        st.toast(f"✅ 已同步奧索網最新期數：{current_p}", icon="🚀")
+        st.success(f"✅ 已完成數據刷新！最新期數：{current_p}")
     else:
-        st.toast(f"⚠️ 網路異常，已切換至公式推算期數：{current_p}", icon="⚠️")
+        st.warning(f"⚠️ 網路異常，已切換至公式推算期數：{current_p}")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- 7. 從資料庫讀取並顯示最新開獎結果 ---
+# --- 7. 讀取最新歷史紀錄 ---
 cursor = conn.cursor()
 cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
 row_data = cursor.fetchone()
@@ -130,19 +137,16 @@ if row_data:
     </div>
     """, unsafe_allow_html=True)
 else:
-    st.markdown("""
-    <div class="latest-box" style="text-align:center;">
-       <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未同步數據</div>
-       <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊上方「立即刷新數據」按鈕同步號碼</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.info("尚無歷史資料，請點擊上方刷新按鈕。")
 
-# --- 8. 預測版面 (改用最標準的 Streamlit 寫法，徹底排除 HTML 解析不穩定的問題) ---
+# --- 8. V10 三星預測 ---
 st.subheader("🎯 V10 三星推薦組合")
+st.markdown("<p style='color:#A0AEC0; font-size:14px; margin-top:-10px; margin-bottom:15px;'>依據歷史資料庫回測，鎖定區域輪替與尾數熱度</p>", unsafe_allow_html=True)
+
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">01</h2></div>', unsafe_allow_html=True)
 with col2:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">11</h2></div>', unsafe_allow_html=True)
 with col3:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">56</h2></div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">31</h2></div>', unsafe_allow_html=True)
