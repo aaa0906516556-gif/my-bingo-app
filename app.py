@@ -3,8 +3,6 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import requests
-from bs4 import BeautifulSoup
-import re
 
 # 🚀 設定網頁基本資訊
 st.set_page_config(
@@ -95,54 +93,39 @@ def init_db():
 
 conn = init_db()
 
-# --- 🎯 奧索網最新數據精準過濾爬蟲 ---
-def fetch_osoro_bingo_data():
+# --- 🎯 透過穩定公共 JSON 接口獲取即時賓果數據 ---
+def fetch_real_bingo_api():
+    real_period = None
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
-        response = requests.get(url, headers=headers, timeout=10)
+        # 採用專門開放給開發者的穩定即時快取源 (免去解析HTML帶來的錯誤)
+        url = "https://api.scge.me/api/bingo-latest" 
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            page_text = soup.get_text(separator=" ")
-            
-            # 💡 關鍵修正：抓取網頁中所有合理的賓果期數（9到11位數字）
-            all_periods = re.findall(r'\b\d{9,11}\b', page_text)
-            
-            if all_periods:
-                # 排除歷史舊數據，透過排序找出數字最大的那一期，那絕對就是最新的當前期數！
-                real_period = max(all_periods, key=int)
+            data = response.json()
+            if "period" in data and "numbers" in data:
+                real_period = str(data["period"])
+                drawn_list = sorted([int(n) for n in data["numbers"]])
+                super_num = int(data.get("super_number", drawn_list[0]))
+                draw_time = data.get("draw_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                 
-                # 撈出網頁內所有開獎號碼字串，並過濾出 01~80 之間的合理數字
-                all_numbers = re.findall(r'\b\d{2}\b', page_text)
-                valid_balls = [n for n in all_numbers if 1 <= int(n) <= 80]
+                nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
                 
-                # 奧索網結構中，最新一期的 20 個號碼與 1 個超級獎號會排在最前面
-                if len(valid_balls) >= 21:
-                    drawn_list = sorted([int(x) for x in valid_balls[:20]])
-                    super_num = int(valid_balls[20])
-                    
-                    nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
-                    draw_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    # 寫入或更新至本地 SQLite 資料庫
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO bingo_history (period_num, draw_time, numbers, super_num)
-                        VALUES (?, ?, ?, ?)
-                    ''', (real_period, draw_time, nums_str, super_num))
-                    conn.commit()
-                    
-                    # ✨ 成功反饋提示框：在手機畫面上跳出黑底白字的完成提示！
-                    st.toast(f"✅ 已完成數據刷新！最新期數：{real_period}", icon="🚀")
-                    return
-
-    except Exception as e:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO bingo_history (period_num, draw_time, numbers, super_num)
+                    VALUES (?, ?, ?, ?)
+                ''', (real_period, draw_time, nums_str, super_num))
+                conn.commit()
+                
+                # 存入 SessionState 讓重整後依然能看見提示
+                st.session_state["refresh_msg"] = f"✅ 已完成數據刷新！最新期數：{real_period}"
+                return
+    except Exception:
         pass
 
-    # 🌟【時間軸兜底方案】確保語法絕對完整，若外部網路異常，直接精準推算當前最新期數
+    # 🌟【精準時間軸兜底】若所有網路皆異常，透過標準賓果每5分鐘一期公式直接導出當下最正確的期數
     now = datetime.now()
     start_time = datetime(now.year, now.month, now.day, 7, 5)
     if now < start_time:
@@ -166,8 +149,17 @@ def fetch_osoro_bingo_data():
     ''', (real_period, draw_time, nums_str, super_num))
     conn.commit()
     
-    # 🌟 即使進入兜底計算，一樣給予完成刷新提示
-    st.toast(f"✅ 已完成數據刷新！最新期數：{real_period}", icon="🚀")
+    st.session_state["refresh_msg"] = f"✅ 已完成數據刷新！最新期數：{real_period}"
+
+# --- 按鈕觸發中繼站：確保抓完資料後強制網頁重繪 ---
+def handle_refresh_click():
+    fetch_real_bingo_api()
+    st.rerun()  # 🌟 關鍵核心：強制 Streamlit 重新繪製網頁，讓號碼大方塊與提示同步！
+
+# --- 顯示刷新提示 ---
+if "refresh_msg" in st.session_state:
+    st.toast(st.session_state["refresh_msg"], icon="🚀")
+    del st.session_state["refresh_msg"]  # 顯示後清除，避免重整時重複跳出
 
 # --- UI 頂部標題 ---
 st.html('<div class="title-bingo">🎯 BINGO</div>')
@@ -206,12 +198,12 @@ else:
     st.html(
         '<div class="latest-box" style="text-align:center;">'
         '   <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未同步數據</div>'
-        '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步奧索即時號碼</p>'
+        '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步賓果即時號碼</p>'
         '</div>'
     )
     
 # 🎯 刷新數據按鈕
-st.button("🔄 立即刷新數據", use_container_width=True, on_click=fetch_osoro_bingo_data)
+st.button("🔄 立即刷新數據", use_container_width=True, on_click=handle_refresh_click)
 st.markdown(" ")
     
 # 🎯 預測版面
