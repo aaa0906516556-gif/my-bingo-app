@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 # --- 1. 網頁基本設定 ---
 st.set_page_config(page_title="BINGO V10", page_icon="🎯", layout="centered")
 
-# --- 2. CSS 樣式配置 (精準雙排矩陣) ---
+# --- 2. CSS 樣式配置 (精準 10 欄雙排網格) ---
 st.markdown("""
 <style>
     .title-bingo { text-align: center; font-size: 32px; font-weight: 900; margin-bottom: 10px; color: #FFFFFF; }
@@ -17,7 +17,7 @@ st.markdown("""
     .latest-period { color: #E63946; font-size: 18px; font-weight: bold; }
     .metric-card { background-color: #111418; padding: 12px; border-radius: 8px; border: 1px solid #2D3748; text-align: center; }
     
-    /* 10欄網格，手機完美切成兩排 */
+    /* 10欄網格，手機與網頁完美切成兩排 */
     .balls-grid { 
         display: grid; 
         grid-template-columns: repeat(10, 1fr); 
@@ -59,24 +59,24 @@ def init_db():
 
 conn = init_db()
 
-# --- 4. 核心數據同步邏輯 (純淨版：非真實數據絕不入庫) ---
+# --- 4. 核心數據同步邏輯 (已綁定您專屬的 Google GAS 跳板) ---
 def fetch_and_save():
     success = False
     new_periods_count = 0
     tw_now = datetime.utcnow() + timedelta(hours=8)
     
+    # 已自動嵌入您佈署的 Google 代理伺服器網址
+    GAS_URL = "https://script.google.com/macros/s/AKfycbxyYuX-Okda8nb5Kbr7HS-cw2bqnxOrQl_BUKBc_-CwbFFMyS0dZ7717u5tSN8zG2Xa/exec"
+
     try:
-        url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        res = requests.get(url, headers=headers, timeout=6)
+        # 透過 Google 伺服器去抓取網頁，完美繞過海外 IP 封鎖
+        res = requests.get(GAS_URL, timeout=15)
         
-        if res.status_code == 200:
+        if res.status_code == 200 and not res.text.startswith("Error"):
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.find_all('tr', class_=['RowStyle', 'AlternatingRowStyle'])
             
-            # 用來計算到底寫入了幾期新資料
             cursor = conn.cursor()
-            
             for row in reversed(rows):
                 cols = row.find_all('td')
                 if len(cols) >= 4:
@@ -91,7 +91,6 @@ def fetch_and_save():
                         nums_str = ",".join([str(n).zfill(2) for n in sorted(nums[:20])])
                         d_time = f"{tw_now.strftime('%Y-%m-%d')} {t_str}:00"
                         
-                        # 檢查是否為新資料
                         cursor.execute("SELECT 1 FROM bingo_history WHERE period_num = ?", (p_num,))
                         if not cursor.fetchone():
                             new_periods_count += 1
@@ -99,20 +98,18 @@ def fetch_and_save():
                         conn.execute('INSERT OR REPLACE INTO bingo_history VALUES (?, ?, ?, ?)', (p_num, d_time, nums_str, s_num))
                         success = True
             conn.commit()
-    except Exception:
-        pass
+            msg = f"✅ 成功經由 Google 數據中心同步！已寫入官方最新真實開獎數據 (新增 {new_periods_count} 期)。"
+        else:
+            msg = f"❌ 轉接錯誤：Google 跳板回傳異常，請檢查 Google Apps Script 的部署權限是否設為「任何人」。"
+    except Exception as e:
+        msg = f"❌ 連線失敗：無法串接 Google 代理伺服器 ({str(e)})"
 
-    # 存入 Session 狀態，僅回報「真實成功」與否
-    st.session_state['refresh_status'] = {
-        'is_ok': success, 
-        'new_count': new_periods_count, 
-        'triggered': True
-    }
+    st.session_state['refresh_status'] = {'is_ok': success, 'msg': msg, 'triggered': True}
 
 # --- 5. UI 渲染：頂部標題 ---
 st.markdown('<div class="title-bingo">🎯 BINGO</div>', unsafe_allow_html=True)
 
-# --- 6. 讀取並顯示最新開獎結果 (只會讀取資料庫裡的真實歷史紀錄) ---
+# --- 6. 讀取並顯示最新開獎結果 ---
 cursor = conn.cursor()
 cursor.execute("SELECT period_num, draw_time, numbers, super_num FROM bingo_history ORDER BY period_num DESC LIMIT 1")
 row_data = cursor.fetchone()
@@ -140,30 +137,7 @@ if row_data:
     </div>
     """, unsafe_allow_html=True)
 else:
-    st.info("ℹ️ 歷史資料庫目前空空如也，請點擊下方按鈕進行首次同步。")
+    st.info("ℹ️ 資料庫目前尚無真實紀錄。請點擊下方按鈕，透過 Google 代理完成首次精準數據同步。")
 
-# --- 7. 立即刷新數據按鈕 ---
-st.button("🔄 立即刷新數據", use_container_width=True, on_click=fetch_and_save)
-
-# 狀態提示區 (完全誠實報錯)
-if st.session_state.get('refresh_status', {}).get('triggered', False):
-    status = st.session_state['refresh_status']
-    if status['is_ok']:
-        st.success(f"✅ 成功連線！已同步最新的真實開獎數據 (新增 {status['new_count']} 期)。")
-    else:
-        st.error("❌ 同步失敗：伺服器海外 IP 遭台彩/奧索網防火牆阻擋。目前畫面上顯示的是資料庫內最後一筆「真實歷史數據」，絕無隨機假球。")
-    st.session_state['refresh_status']['triggered'] = False
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- 8. V10 三星預測版面 ---
-st.subheader("🎯 V10 三星推薦組合")
-st.markdown("<p style='color:#A0AEC0; font-size:14px; margin-top:-10px; margin-bottom:15px;'>依據歷史資料庫回測，鎖定區域輪替與尾數熱度</p>", unsafe_allow_html=True)
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦一</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">08</h2></div>', unsafe_allow_html=True)
-with col2:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦二</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">23</h2></div>', unsafe_allow_html=True)
-with col3:
-    st.markdown('<div class="metric-card"><p style="color:#A0AEC0;margin:0;font-size:13px;">推薦三</p><h2 style="color:#E63946;margin:5px 0;font-size:24px;">67</h2></div>', unsafe_allow_html=True)
+# --- 7. 立即刷新數據按鈕 (精確配置在開獎資訊正下方) ---
+st
