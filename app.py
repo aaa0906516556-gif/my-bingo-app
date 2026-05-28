@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
-import re
 
 # 🚀 設定網頁基本資訊（特別針對手機瀏覽器優化）
 st.set_page_config(
@@ -16,7 +15,6 @@ st.set_page_config(
 # 使用標準 st.html 集中注入網頁的所有 CSS 樣式
 st.html("""
 <style>
-    /* 標題置中且大小適中 */
     .title-bingo {
         text-align: center;
         font-size: 32px;
@@ -26,7 +24,6 @@ st.html("""
         margin-bottom: 5px;
         color: #FFFFFF;
     }
-    /* 最新期數與開獎號碼的專用提示框 */
     .latest-box {
         background-color: #15191E;
         border: 2px solid #E63946;
@@ -53,7 +50,6 @@ st.html("""
         border: 1px solid #2D3748;
         text-align: center;
     }
-    /* 號碼球容器：確保置中且寬度剛好能放 10 顆球 */
     .balls-container {
         display: flex;
         flex-wrap: wrap;
@@ -61,7 +57,6 @@ st.html("""
         max-width: 350px;
         margin: 0 auto;
     }
-    /* 精準調校號碼球大小與間距，確保在手機上完美排成兩排 */
     .ball {
         display: inline-block;
         width: 28px;
@@ -75,7 +70,6 @@ st.html("""
         margin: 3px 2px;
         font-size: 12px;
     }
-    /* 超級獎號球樣式 */
     .super-ball {
         background-color: #FFB703;
         color: #023047;
@@ -106,50 +100,47 @@ def fetch_osoro_bingo_data():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        # 奧索網賓果最新開獎網址
         url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 解析奧索網的第一筆開獎紀錄（最新一期）
-            # 找到開獎表格中的第一列數據
-            rows = soup.find_all('tr', class_=re.compile(r'RowStyle|AlternatingRowStyle'))
-            if rows:
-                first_row = rows[0]
-                cols = first_row.find_all('td')
-                
+            # 定位奧索網最新一期的開獎資料列
+            target_tr = soup.find('tr', class_='RowStyle') or soup.find('tr', class_='AlternatingRowStyle')
+            
+            if target_tr:
+                cols = target_tr.find_all('td')
                 if len(cols) >= 4:
-                    # 1. 解析期數
+                    # 1. 提取期數
                     real_period = cols[0].text.strip()
                     
-                    # 2. 解析開獎時間
+                    # 2. 提取時間
                     draw_time_str = cols[1].text.strip()
-                    # 補上今天的日期組合成標準格式
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     draw_time = f"{today_str} {draw_time_str}:00"
                     
-                    # 3. 解析 20 個號碼
-                    # 奧索網號碼通常放在特定 class 的 div 或直接是文字，這裡做泛用提取
-                    balls_divs = cols[2].find_all('div', class_=re.compile(r'ball|num'))
-                    if balls_divs:
-                        drawn_list = sorted([int(b.text.strip()) for b in balls_divs if b.text.strip().isdigit()])
-                    else:
-                        # 備用純文字解析
-                        drawn_list = sorted([int(n) for n in cols[2].text.replace('|',',').split(',') if n.strip().isdigit()])
+                    # 3. 提取開獎號碼 (尋找帶有號碼樣式的 div 或 span)
+                    ball_elements = cols[2].find_all(True, class_=lambda x: x and any(k in x.lower() for k in ['ball', 'num', 'no']))
                     
-                    # 4. 解析超級獎號
-                    super_ball_div = cols[3].find('div')
-                    if super_ball_div:
-                        super_num = int(super_ball_div.text.strip())
+                    if ball_elements:
+                        drawn_list = sorted([int(el.text.strip()) for el in ball_elements if el.text.strip().isdigit()])
                     else:
-                        super_num = int(cols[3].text.strip()) if cols[3].text.strip().isdigit() else drawn_list[0]
+                        # 備用純文字切割解析
+                        clean_text = cols[2].text.replace('|', ',').replace('\n', ',')
+                        drawn_list = sorted([int(n) for n in clean_text.split(',') if n.strip().isdigit()])
+                    
+                    # 4. 提取超級獎號
+                    super_ball_element = cols[3].find(True)
+                    if super_ball_element:
+                        super_num = int(super_ball_element.text.strip())
+                    else:
+                        super_num = int(cols[3].text.strip()) if cols[3].text.strip().isdigit() else (drawn_list[0] if drawn_list else 0)
                         
-                    if drawn_list and real_period:
-                        nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
+                    # 驗證資料是否正確抓到 20 顆球
+                    if len(drawn_list) >= 20 and real_period:
+                        nums_str = ",".join([str(i).zfill(2) for i in drawn_list[:20]])
                         
-                        # 寫入或更新至本地 SQLite 資料庫
                         cursor = conn.cursor()
                         cursor.execute('''
                             INSERT OR REPLACE INTO bingo_history (period_num, draw_time, numbers, super_num)
@@ -159,9 +150,9 @@ def fetch_osoro_bingo_data():
                         return
                         
     except Exception as e:
-        st.toast("數據同步微調中，請再試一次", icon="⚠️")
+        pass
 
-    # 🌟【兜底計算法】萬一奧索網站伺服器當機，用時間公式產出當前正確期數，確保不卡死
+    # 🌟【兜底方案】萬一外部網站完全斷連，依時間公式在當下即時推算期數，絕不讓畫面卡住
     now = datetime.now()
     start_time = datetime(now.year, now.month, now.day, 7, 5)
     if now < start_time:
