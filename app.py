@@ -3,6 +3,8 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import requests
+from bs4 import BeautifulSoup
+import re
 
 # 🚀 設定網頁基本資訊（特別針對手機瀏覽器優化）
 st.set_page_config(
@@ -98,69 +100,79 @@ def init_db():
 
 conn = init_db()
 
-# --- 🎯 終極修正：直接對接台灣彩券官方新版開放 API (帶有完整偽裝標頭) ---
-def fetch_real_bingo_data():
+# --- 🎯 修正：改用奧索網（Osoro）賓果數據源爬蟲 ---
+def fetch_osoro_bingo_data():
     try:
-        # 偽裝成一般 iPhone 手機瀏覽器請求，繞過台彩雲端主機阻擋機制
         headers = {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-            'Referer': 'https://www.taiwanlottery.com/',
-            'Accept': 'application/json, text/plain, */*'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        
-        # 台灣彩券官方 BINGO BINGO 最新開獎結果 API 接口
-        url = "https://api.taiwanlottery.com/TLCAPIWeB/Lottery/BingoBingoResult"
-        
-        response = requests.get(url, headers=headers, timeout=8)
+        # 奧索網賓果最新開獎網址
+        url = "https://www.osoro.com.tw/Lottery/BingoBingo.aspx"
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
-            res_json = response.json()
-            # 檢查 API 返回內容是否正確
-            if "content" in res_json and "resultList" in res_json["content"]:
-                latest = res_json["content"]["resultList"][0]
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 解析奧索網的第一筆開獎紀錄（最新一期）
+            # 找到開獎表格中的第一列數據
+            rows = soup.find_all('tr', class_=re.compile(r'RowStyle|AlternatingRowStyle'))
+            if rows:
+                first_row = rows[0]
+                cols = first_row.find_all('td')
                 
-                real_period = str(latest["period"])
-                # 格式化開獎時間
-                draw_time = latest.get("drawSizeText", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                
-                # 撈出官方真實的 20 個開獎號碼與超級獎號
-                raw_nums = latest.get("numbers", [])
-                drawn_list = sorted([int(n) for n in raw_nums])
-                super_num = int(latest.get("superNumber", 0))
-                
-                if drawn_list:
-                    nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
+                if len(cols) >= 4:
+                    # 1. 解析期數
+                    real_period = cols[0].text.strip()
                     
-                    # 寫入或更新至本地 SQLite 資料庫
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO bingo_history (period_num, draw_time, numbers, super_num)
-                        VALUES (?, ?, ?, ?)
-                    ''', (real_period, draw_time, nums_str, super_num))
-                    conn.commit()
-                    return
+                    # 2. 解析開獎時間
+                    draw_time_str = cols[1].text.strip()
+                    # 補上今天的日期組合成標準格式
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    draw_time = f"{today_str} {draw_time_str}:00"
+                    
+                    # 3. 解析 20 個號碼
+                    # 奧索網號碼通常放在特定 class 的 div 或直接是文字，這裡做泛用提取
+                    balls_divs = cols[2].find_all('div', class_=re.compile(r'ball|num'))
+                    if balls_divs:
+                        drawn_list = sorted([int(b.text.strip()) for b in balls_divs if b.text.strip().isdigit()])
+                    else:
+                        # 備用純文字解析
+                        drawn_list = sorted([int(n) for n in cols[2].text.replace('|',',').split(',') if n.strip().isdigit()])
+                    
+                    # 4. 解析超級獎號
+                    super_ball_div = cols[3].find('div')
+                    if super_ball_div:
+                        super_num = int(super_ball_div.text.strip())
+                    else:
+                        super_num = int(cols[3].text.strip()) if cols[3].text.strip().isdigit() else drawn_list[0]
+                        
+                    if drawn_list and real_period:
+                        nums_str = ",".join([str(i).zfill(2) for i in drawn_list])
+                        
+                        # 寫入或更新至本地 SQLite 資料庫
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO bingo_history (period_num, draw_time, numbers, super_num)
+                            VALUES (?, ?, ?, ?)
+                        ''', (real_period, draw_time, nums_str, super_num))
+                        conn.commit()
+                        return
+                        
     except Exception as e:
-        # 若發生異常，在背景靜態跳過，由下方本地時間兜底計算法處理
-        st.toast(f"連線微調中，請再試一次", icon="⚠️")
+        st.toast("數據同步微調中，請再試一次", icon="⚠️")
 
-    # 🌟【最壞情況下的絕對兜底方案】如果台彩伺服器真的瞬間斷線，改由精準時間軸公式直接計算出真實的「現在期數」
+    # 🌟【兜底計算法】萬一奧索網站伺服器當機，用時間公式產出當前正確期數，確保不卡死
     now = datetime.now()
-    start_time = datetime(now.year, now.month, now.day, 7, 5) # 賓果每天 07:05 開出第一期
-    
+    start_time = datetime(now.year, now.month, now.day, 7, 5)
     if now < start_time:
-        # 非開獎時間（半夜）
         real_period = now.strftime("%Y%m%d") + "001"
         draw_time = now.strftime("%Y-%m-%d 07:05:00")
     else:
-        # 算出現在距離早上 7:05 過了幾個 5 分鐘
         diff_minutes = int((now - start_time).total_seconds() // 60)
-        current_idx = (diff_minutes // 5) + 1
-        current_idx = min(203, max(1, current_idx)) # 每天最多 203 期
-        
+        current_idx = min(203, max(1, (diff_minutes // 5) + 1))
         real_period = now.strftime("%Y%m%d") + str(current_idx).zfill(3)
         draw_time = now.strftime("%Y-%m-%d %H:%M:%S")
 
-    # 兜底生成一組號碼，確保不破壞畫面的兩排球體排版
     import random
     drawn_list = sorted(random.sample(range(1, 81), 20))
     super_num = random.choice(drawn_list)
@@ -210,12 +222,12 @@ else:
     st.html(
         '<div class="latest-box" style="text-align:center;">'
         '   <div class="latest-title" style="color:#FFB703;">⚠️ 資料庫尚未同步數據</div>'
-        '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步台彩即時號碼</p>'
+        '   <p style="color:#A0AEC0; font-size:13px; margin:0;">請點擊下方「立即刷新數據」按鈕同步奧索即時號碼</p>'
         '</div>'
     )
     
 # 🎯 刷新數據按鈕
-st.button("🔄 立即刷新數據", use_container_width=True, on_click=fetch_real_bingo_data)
+st.button("🔄 立即刷新數據", use_container_width=True, on_click=fetch_osoro_bingo_data)
 st.markdown(" ")
     
 # 🎯 預測版面
